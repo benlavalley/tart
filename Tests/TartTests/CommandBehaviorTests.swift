@@ -191,6 +191,29 @@ final class CommandBehaviorTests: XCTestCase {
     }
   #endif
 
+  func testForwardPortAcceptsMultipleForwards() throws {
+    try withTemporaryTartHome {
+      try makeRunnableVM(named: "forward")
+
+      let command = try Run.parseAsRoot([
+        "forward", "--forward-port", "2222:22", "--forward-port", "8080:80",
+      ]) as! Run
+
+      XCTAssertEqual(command.forwardPort.map(\.hostPort), [2222, 8080])
+      XCTAssertEqual(command.forwardPort.map(\.guestPort), [22, 80])
+    }
+  }
+
+  func testForwardPortRejectsDuplicateHostPorts() throws {
+    try withTemporaryTartHome {
+      try makeRunnableVM(named: "forward")
+
+      XCTAssertThrowsError(try Run.parseAsRoot([
+        "forward", "--forward-port", "2222:22", "--forward-port", "2222:80",
+      ]))
+    }
+  }
+
   func testPushRejectsInvalidConcurrencyAndChunkSize() {
     XCTAssertThrowsError(try Push.parse(["vm", "example.com/org/vm:latest", "--concurrency", "0"]))
     XCTAssertThrowsError(try Push.parse(["vm", "example.com/org/vm:latest", "--chunk-size=-1"]))

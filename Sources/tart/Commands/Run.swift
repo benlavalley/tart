@@ -282,6 +282,15 @@ struct Run: AsyncParsableCommand {
   @Flag(help: ArgumentHelp("Restrict network access to the host-only network"))
   var netHost: Bool = false
 
+  @Option(help: ArgumentHelp("Forward a TCP port on the host to a port in the VM (e.g. --forward-port 2222:22)", discussion: """
+  Takes the form HOST_PORT:GUEST_PORT and can be specified multiple times.
+
+  Tart listens on HOST_PORT on all of the host's IPv4 interfaces, so the forwarded port can be reached both from the host itself and from other machines on its network. Each connection is relayed to GUEST_PORT on the VM's IP address, as reported by "tart ip".
+
+  Requires macOS 14 (Sonoma) or newer.
+  """, valueName: "host-port:guest-port"))
+  var forwardPort: [PortForward] = []
+
   @Option(help: ArgumentHelp("Set the root disk options (e.g. --root-disk-opts=\"ro\" or --root-disk-opts=\"caching=cached,sync=none\")",
                              discussion: """
                              Options are comma-separated and are as follows:
@@ -365,6 +374,17 @@ struct Run: AsyncParsableCommand {
 
     if vncPassword?.isEmpty == true {
       throw ValidationError("--vnc-password cannot be empty")
+    }
+
+    if !forwardPort.isEmpty {
+      if #unavailable(macOS 14) {
+        throw ValidationError("--forward-port requires macOS 14 (Sonoma) or newer")
+      }
+
+      let hostPorts = forwardPort.map(\.hostPort)
+      if Swift.Set(hostPorts).count != hostPorts.count {
+        throw ValidationError("--forward-port host ports must be unique")
+      }
     }
 
     // Automatically enable --net-softnet when any of its related options are specified
@@ -586,6 +606,25 @@ struct Run: AsyncParsableCommand {
 
     let task = Task {
       do {
+        // Listen on the forwarded ports before starting the VM
+        // to fail early when any of them are already in use
+        if #available(macOS 14, *) {
+          let vmMACAddress = MACAddress(fromString: vmConfig.macAddress.string)!
+          let resolutionStrategy: IPResolutionStrategy = netBridged.isEmpty ? .dhcp : .arp
+
+          for portForward in forwardPort {
+            let portForwarder = try await PortForwarder(portForward) {
+              try await IP.resolveIP(vmMACAddress, resolutionStrategy: resolutionStrategy)
+            }
+
+            ErrorReportingTask("Failed to run port forwarding") {
+              try await portForwarder.run()
+            }
+
+            print("Forwarding host port \(portForward.hostPort) to the VM's port \(portForward.guestPort)")
+          }
+        }
+
         var resume = false
 
         #if arch(arm64)

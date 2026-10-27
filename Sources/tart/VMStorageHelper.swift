@@ -75,6 +75,7 @@ enum RuntimeError : Error {
   case ImportFailed(_ message: String)
   case SoftnetFailed(_ message: String)
   case VNCFailed(_ message: String)
+  case PortForwardingFailed(_ message: String)
   case OCIStorageError(_ message: String)
   case SuspendFailed(_ message: String)
   case PullFailed(_ message: String)
@@ -140,6 +141,8 @@ extension RuntimeError : CustomStringConvertible {
       return "Softnet failed: \(message)"
     case .VNCFailed(let message):
       return "VNC failed: \(message)"
+    case .PortForwardingFailed(let message):
+      return "Port forwarding failed: \(message)"
     case .OCIStorageError(let message):
       return "OCI storage error: \(message)"
     case .SuspendFailed(let message):
