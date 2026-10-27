@@ -119,6 +119,24 @@ struct Run: AsyncParsableCommand {
   #endif
   var vncExperimental: Bool = false
 
+  #if arch(arm64)
+    @Option(help: ArgumentHelp(
+      "Port for the --vnc-experimental VNC server to listen on.",
+      discussion: "By default, a random free port is used.",
+      valueName: "port"))
+  #endif
+  var vncPort: UInt16?
+
+  #if arch(arm64)
+    @Option(help: ArgumentHelp(
+      "Password for the --vnc-experimental VNC server.",
+      discussion: "Can also be set using the TART_VNC_PASSWORD environment variable, which keeps the password out of the process list.\n"
+        + "By default, a random password is generated.\n"
+        + "Note that VNC authentication only checks the first 8 characters of the password.",
+      valueName: "password"))
+  #endif
+  var vncPassword: String?
+
   @Option(help: ArgumentHelp("""
   Additional disk attachments with an optional read-only and synchronization options in the form of path[:options] (e.g. --disk="disk.bin", --disk="ubuntu.iso:ro", --disk="/dev/disk0", --disk "ghcr.io/cirruslabs/xcode:16.0:ro" or --disk="nbd://localhost:10809/myDisk:sync=none")
   """, discussion: """
@@ -335,6 +353,20 @@ struct Run: AsyncParsableCommand {
       throw ValidationError("--vnc and --vnc-experimental are mutually exclusive")
     }
 
+    if (vncPort != nil || vncPassword != nil) && !vncExperimental {
+      throw ValidationError("--vnc-port and --vnc-password can only be used with --vnc-experimental")
+    }
+
+    if vncExperimental && vncPassword == nil,
+       let environmentPassword = ProcessInfo.processInfo.environment["TART_VNC_PASSWORD"],
+       !environmentPassword.isEmpty {
+      vncPassword = environmentPassword
+    }
+
+    if vncPassword?.isEmpty == true {
+      throw ValidationError("--vnc-password cannot be empty")
+    }
+
     // Automatically enable --net-softnet when any of its related options are specified
     if netSoftnetAllow != nil || netSoftnetBlock != nil || netSoftnetExpose != nil || netSoftnetControlFd != nil {
       netSoftnet = true
@@ -522,7 +554,11 @@ struct Run: AsyncParsableCommand {
         let vmConfig = try VMConfig.init(fromURL: vmDir.configURL)
         return ScreenSharingVNC(vmConfig: vmConfig)
       } else if vncExperimental {
-        return FullFledgedVNC(virtualMachine: vm!.virtualMachine)
+        if let vncPassword, vncPassword.utf8.count > 8 {
+          fputs("Warning: VNC authentication only checks the first 8 characters of the password\n", stderr)
+        }
+
+        return FullFledgedVNC(virtualMachine: vm!.virtualMachine, port: vncPort ?? 0, password: vncPassword)
       } else {
         return nil
       }

@@ -138,6 +138,59 @@ final class CommandBehaviorTests: XCTestCase {
     }
   }
 
+  #if arch(arm64)
+    func testVNCExperimentalAcceptsFixedPortAndPassword() throws {
+      try withTemporaryTartHome {
+        try makeRunnableVM(named: "vnc")
+
+        let command = try Run.parseAsRoot([
+          "vnc", "--vnc-experimental", "--vnc-port", "5901", "--vnc-password", "secret",
+        ]) as! Run
+
+        XCTAssertEqual(command.vncPort, 5901)
+        XCTAssertEqual(command.vncPassword, "secret")
+      }
+    }
+
+    func testVNCPortAndPasswordRequireVNCExperimental() throws {
+      try withTemporaryTartHome {
+        try makeRunnableVM(named: "vnc")
+
+        XCTAssertThrowsError(try Run.parseAsRoot(["vnc", "--vnc-port", "5901"]))
+        XCTAssertThrowsError(try Run.parseAsRoot(["vnc", "--vnc-password", "secret"]))
+        XCTAssertThrowsError(try Run.parseAsRoot(["vnc", "--vnc", "--vnc-port", "5901"]))
+      }
+    }
+
+    func testVNCPasswordCannotBeEmpty() throws {
+      try withTemporaryTartHome {
+        try makeRunnableVM(named: "vnc")
+
+        XCTAssertThrowsError(try Run.parseAsRoot(["vnc", "--vnc-experimental", "--vnc-password", ""]))
+      }
+    }
+
+    func testVNCPasswordFallsBackToEnvironment() throws {
+      try withTemporaryTartHome {
+        try makeRunnableVM(named: "vnc")
+
+        let previousPassword = ProcessInfo.processInfo.environment["TART_VNC_PASSWORD"]
+        setenv("TART_VNC_PASSWORD", "from-env", 1)
+        defer { restoreEnvironment("TART_VNC_PASSWORD", to: previousPassword) }
+
+        let fromEnvironment = try Run.parseAsRoot(["vnc", "--vnc-experimental"]) as! Run
+        XCTAssertEqual(fromEnvironment.vncPassword, "from-env")
+
+        let fromFlag = try Run.parseAsRoot(["vnc", "--vnc-experimental", "--vnc-password", "from-flag"]) as! Run
+        XCTAssertEqual(fromFlag.vncPassword, "from-flag")
+
+        // The environment variable alone must not make plain runs fail validation
+        let withoutVNC = try Run.parseAsRoot(["vnc"]) as! Run
+        XCTAssertNil(withoutVNC.vncPassword)
+      }
+    }
+  #endif
+
   func testPushRejectsInvalidConcurrencyAndChunkSize() {
     XCTAssertThrowsError(try Push.parse(["vm", "example.com/org/vm:latest", "--concurrency", "0"]))
     XCTAssertThrowsError(try Push.parse(["vm", "example.com/org/vm:latest", "--chunk-size=-1"]))
@@ -397,6 +450,13 @@ final class CommandBehaviorTests: XCTestCase {
       at: Config().tartTmpDir,
       includingPropertiesForKeys: nil
     )
+  }
+
+  private func makeRunnableVM(named name: String) throws {
+    let vmDir = try VMStorageLocal().create(name)
+    try config().save(toURL: vmDir.configURL)
+    XCTAssertTrue(FileManager.default.createFile(atPath: vmDir.nvramURL.path, contents: Data()))
+    XCTAssertTrue(FileManager.default.createFile(atPath: vmDir.diskURL.path, contents: Data()))
   }
 
   private func installUnavailableDiskutil(beforeFailure: String = "") throws -> String? {
